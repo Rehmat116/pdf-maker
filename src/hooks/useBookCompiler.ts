@@ -48,6 +48,8 @@ const rotateApiKey = (): boolean => {
 export function useBookCompiler() {
   const [images, setImages] = useState<BookImage[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isPreparingImages, setIsPreparingImages] = useState(false);
+  const [preparingState, setPreparingState] = useState({ total: 0, completed: 0 });
   const [processingState, setProcessingState] = useState<ProcessingState>({
     total: 0,
     completed: 0,
@@ -374,10 +376,15 @@ RESPOND ONLY WITH THE JSON ARRAY.`,
 
   // Zero-overhead add - just blob URLs, no FileReader
   const addImages = useCallback(async (files: File[]) => {
-    const newImages = await Promise.all(
-      files.map(async (file, index) => {
+    setIsPreparingImages(true);
+    setPreparingState({ total: files.length, completed: 0 });
+
+    const newImages: BookImage[] = [];
+
+    try {
+      for (const [index, file] of files.entries()) {
         const cropped = await autoCropImage(file);
-        return {
+        const newImage = {
           id: `${Date.now()}-${index}-${Math.random().toString(36).substr(2, 9)}`,
           file: cropped.file,
           preview: cropped.croppedPreview,
@@ -387,11 +394,21 @@ RESPOND ONLY WITH THE JSON ARRAY.`,
           status: "pending" as const,
           pageNumbers: [],
         } satisfies BookImage;
-      }),
-    );
 
-    setImages((prev) => [...prev, ...newImages]);
-    return newImages;
+        newImages.push(newImage);
+        setImages((prev) => [...prev, newImage]);
+        setPreparingState({ total: files.length, completed: index + 1 });
+
+        if ((index + 1) % 5 === 0) {
+          await sleep(0);
+        }
+      }
+
+      return newImages;
+    } finally {
+      setIsPreparingImages(false);
+      setPreparingState({ total: 0, completed: 0 });
+    }
   }, []);
 
   const removeImage = useCallback((id: string) => {
@@ -560,6 +577,8 @@ RESPOND ONLY WITH THE JSON ARRAY.`,
   return {
     images,
     isProcessing,
+    isPreparingImages,
+    preparingState,
     processingState,
     addImages,
     removeImage,

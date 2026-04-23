@@ -4,9 +4,10 @@ import { Upload, Camera, FolderOpen } from 'lucide-react';
 interface DropZoneProps {
   onFilesAdded: (files: File[]) => void;
   disabled?: boolean;
+  helperText?: string;
 }
 
-export function DropZone({ onFilesAdded, disabled }: DropZoneProps) {
+export function DropZone({ onFilesAdded, disabled, helperText }: DropZoneProps) {
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
@@ -72,6 +73,11 @@ export function DropZone({ onFilesAdded, disabled }: DropZoneProps) {
           <p className="text-sm text-muted-foreground">
             or click to browse • JPG, PNG, WEBP
           </p>
+          {helperText && (
+            <p className="text-xs text-[hsl(var(--accent))]">
+              {helperText}
+            </p>
+          )}
         </div>
 
         <div className="mt-2 flex items-center gap-3">
@@ -110,6 +116,9 @@ export function DropZone({ onFilesAdded, disabled }: DropZoneProps) {
         accept="image/*"
         className="hidden"
         onChange={(e) => handleFiles(e.target.files)}
+        onClick={(e) => {
+          e.currentTarget.value = "";
+        }}
         disabled={disabled}
       />
       <input
@@ -119,6 +128,9 @@ export function DropZone({ onFilesAdded, disabled }: DropZoneProps) {
         capture="environment"
         className="hidden"
         onChange={(e) => handleFiles(e.target.files)}
+        onClick={(e) => {
+          e.currentTarget.value = "";
+        }}
         disabled={disabled}
       />
     </div>

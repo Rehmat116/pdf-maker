@@ -155,6 +155,8 @@ const Index = () => {
   const {
     images,
     isProcessing,
+    isPreparingImages,
+    preparingState,
     processingState,
     addImages,
     removeImage,
@@ -267,6 +269,9 @@ const Index = () => {
         multiple
         accept="image/*"
         className="hidden"
+        onClick={(e) => {
+          e.currentTarget.value = "";
+        }}
         onChange={(e) => {
           if (e.target.files) {
             void handleFilesAdded(Array.from(e.target.files));
@@ -290,7 +295,36 @@ const Index = () => {
             </p>
           </section>
 
-          <DropZone onFilesAdded={(files) => void handleFilesAdded(files)} disabled={isProcessing} />
+          <DropZone
+            onFilesAdded={(files) => void handleFilesAdded(files)}
+            disabled={isProcessing || isPreparingImages}
+            helperText={
+              isPreparingImages && preparingState.total > 0
+                ? `Preparing ${preparingState.completed}/${preparingState.total} images...`
+                : undefined
+            }
+          />
+
+          {isPreparingImages && (
+            <div className="rounded-[20px] border border-border bg-card p-4 shadow-sm">
+              <div className="mb-2 flex items-center justify-between text-sm">
+                <span className="font-medium text-foreground">Preparing images...</span>
+                <span className="text-muted-foreground">
+                  {preparingState.completed} / {preparingState.total}
+                </span>
+              </div>
+              <div className="relative h-2 overflow-hidden rounded-full bg-secondary">
+                <div
+                  className="absolute inset-y-0 left-0 rounded-full bg-[linear-gradient(90deg,#e8b84b,#c9a84c)] transition-all duration-300"
+                  style={{
+                    width: preparingState.total > 0
+                      ? `${(preparingState.completed / preparingState.total) * 100}%`
+                      : "0%",
+                  }}
+                />
+              </div>
+            </div>
+          )}
 
           <ProgressBar state={processingState} isProcessing={isProcessing} />
 
