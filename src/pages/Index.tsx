@@ -167,6 +167,7 @@ const Index = () => {
     getSortedImages,
     removeDuplicates,
     rescanImage,
+    retryFailedImages,
   } = useBookCompiler();
 
   const handleFilesAdded = async (files: File[]) => {
@@ -358,6 +359,7 @@ const Index = () => {
         isProcessing={isProcessing}
         onStartProcessing={startProcessing}
         onStopProcessing={stopProcessing}
+        onRetryFailed={retryFailedImages}
         onDownloadPDF={handleDownloadPDF}
         onClearAll={clearAll}
         onRemoveDuplicates={handleRemoveDuplicates}

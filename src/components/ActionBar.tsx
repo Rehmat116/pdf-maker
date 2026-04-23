@@ -7,6 +7,7 @@ interface ActionBarProps {
   isProcessing: boolean;
   onStartProcessing: () => void;
   onStopProcessing: () => void;
+  onRetryFailed: () => void;
   onDownloadPDF: () => void;
   onClearAll: () => void;
   onRemoveDuplicates: () => void;
@@ -18,6 +19,7 @@ export function ActionBar({
   isProcessing,
   onStartProcessing,
   onStopProcessing,
+  onRetryFailed,
   onDownloadPDF,
   onClearAll,
   onRemoveDuplicates,
@@ -25,6 +27,7 @@ export function ActionBar({
 }: ActionBarProps) {
   const pendingCount = images.filter((img) => img.status === 'pending').length;
   const completedCount = images.filter((img) => img.status === 'completed' && img.pageNumbers.length > 0).length;
+  const failedCount = images.filter((img) => img.status === 'error' && !img.error?.startsWith('Skipped:')).length;
 
   if (images.length === 0) return null;
 
@@ -71,6 +74,13 @@ export function ActionBar({
           <Button onClick={onRemoveDuplicates} variant="ghost" size="sm" className="gap-2 text-muted-foreground">
             <RefreshCw className="h-4 w-4" />
             Remove Duplicates
+          </Button>
+        )}
+
+        {!isProcessing && failedCount > 0 && (
+          <Button onClick={onRetryFailed} variant="outline" size="sm" className="gap-2 rounded-full border-amber-300 text-amber-700 hover:bg-amber-50">
+            <RefreshCw className="h-4 w-4" />
+            Retry All Failed ({failedCount})
           </Button>
         )}
 

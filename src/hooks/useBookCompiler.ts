@@ -6,13 +6,32 @@ import { getAutoCropEnabled } from "@/lib/settings";
 
 // --- OPTIMIZED SETTINGS ---
 const BATCH_SIZE = 25;
-const DELAY_BETWEEN_BATCHES = 12000; // 12 seconds
+const DELAY_BETWEEN_BATCHES = 1500;
 const MAX_RETRIES = 5;
 const INITIAL_RETRY_DELAY = 10000;
 const API_TIMEOUT = 45000; // 45 seconds timeout
 const AUTO_SCAN_RETRY_LIMIT = 4;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const getAvailableKeyCount = (): number => {
+  const stored = localStorage.getItem('smartbook_api_keys');
+  if (stored) {
+    try {
+      const keys = JSON.parse(stored);
+      if (Array.isArray(keys) && keys.length > 0) {
+        return keys.length;
+      }
+    } catch {}
+  }
+
+  return localStorage.getItem("MY_GEMINI_KEY") || import.meta.env.VITE_GEMINI_API_KEY ? 1 : 0;
+};
+
+const getInterBatchDelay = () => {
+  const keyCount = getAvailableKeyCount();
+  return keyCount > 1 ? 500 : DELAY_BETWEEN_BATCHES;
+};
 
 // Helper to get current API key from pocket manager
 const getApiKey = (): string | null => {
@@ -247,21 +266,30 @@ RESPOND ONLY WITH THE JSON ARRAY.`,
 
   // JIT batch processing - compress only when sending
   const processBatch = async (batchImages: BookImage[], existingPages: Set<number>): Promise<BookImage[]> => {
-    const base64Data: string[] = [];
-    const imageIds: string[] = [];
-    const failedIds: string[] = [];
+    const compressionResults = await Promise.all(
+      batchImages.map(async (image) => {
+        try {
+          return {
+            id: image.id,
+            base64: await compressImageJIT(image.file),
+          };
+        } catch (err) {
+          console.error("Failed to convert image:", err);
+          return {
+            id: image.id,
+            base64: null,
+          };
+        }
+      }),
+    );
 
-    // JIT compression - convert only now, discard immediately after
-    for (const image of batchImages) {
-      try {
-        const base64 = await compressImageJIT(image.file);
-        base64Data.push(base64);
-        imageIds.push(image.id);
-      } catch (err) {
-        console.error("Failed to convert image:", err);
-        failedIds.push(image.id);
-      }
-    }
+    const base64Data = compressionResults
+      .filter((item): item is { id: string; base64: string } => typeof item.base64 === "string")
+      .map((item) => item.base64);
+    const imageIds = compressionResults
+      .filter((item): item is { id: string; base64: string } => typeof item.base64 === "string")
+      .map((item) => item.id);
+    const failedIds = compressionResults.filter((item) => item.base64 === null).map((item) => item.id);
 
     if (base64Data.length === 0) {
       return batchImages.map((img) => ({
@@ -490,15 +518,13 @@ RESPOND ONLY WITH THE JSON ARRAY.`,
     setProcessingState({ total: 0, completed: 0, processing: 0, errors: 0 });
   }, [images]);
 
-  const startProcessing = useCallback(async () => {
-    const pendingImages = images.filter((img) => img.status === "pending");
-    if (pendingImages.length === 0) return;
-
+  const runProcessing = useCallback(async (targetImages: BookImage[]) => {
+    if (targetImages.length === 0) return;
     setIsProcessing(true);
     abortRef.current = false;
 
     setProcessingState({
-      total: pendingImages.length,
+      total: targetImages.length,
       completed: 0,
       processing: 0,
       errors: 0,
@@ -506,8 +532,8 @@ RESPOND ONLY WITH THE JSON ARRAY.`,
 
     const existingPages = getExistingPageNumbers(images);
     const batches: BookImage[][] = [];
-    for (let i = 0; i < pendingImages.length; i += BATCH_SIZE) {
-      batches.push(pendingImages.slice(i, i + BATCH_SIZE));
+    for (let i = 0; i < targetImages.length; i += BATCH_SIZE) {
+      batches.push(targetImages.slice(i, i + BATCH_SIZE));
     }
 
     let completedCount = 0;
@@ -544,11 +570,41 @@ RESPOND ONLY WITH THE JSON ARRAY.`,
       }));
 
       if (batchIdx < batches.length - 1 && !abortRef.current) {
-        await sleep(DELAY_BETWEEN_BATCHES);
+        await sleep(getInterBatchDelay());
       }
     }
     setIsProcessing(false);
   }, [images]);
+
+  const startProcessing = useCallback(async () => {
+    const pendingImages = images.filter((img) => img.status === "pending");
+    if (pendingImages.length === 0) return;
+    await runProcessing(pendingImages);
+  }, [images, runProcessing]);
+
+  const retryFailedImages = useCallback(async () => {
+    const failedImages = images.filter(
+      (img) => img.status === "error" && !img.error?.startsWith("Skipped:"),
+    );
+    if (failedImages.length === 0) return;
+
+    setImages((prev) =>
+      prev.map((img) =>
+        failedImages.some((failed) => failed.id === img.id)
+          ? { ...img, status: "pending" as const, retryCount: 0, error: undefined }
+          : img,
+      ),
+    );
+
+    const refreshedTargets = failedImages.map((img) => ({
+      ...img,
+      status: "pending" as const,
+      retryCount: 0,
+      error: undefined,
+    }));
+
+    await runProcessing(refreshedTargets);
+  }, [images, runProcessing]);
 
   const stopProcessing = useCallback(() => {
     abortRef.current = true;
@@ -678,5 +734,6 @@ RESPOND ONLY WITH THE JSON ARRAY.`,
     getSortedImages,
     removeDuplicates,
     rescanImage,
+    retryFailedImages,
   };
 }
