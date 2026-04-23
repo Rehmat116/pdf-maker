@@ -4,11 +4,12 @@ export interface BookImage {
   preview: string;
   originalPreview: string;
   croppedPreview: string;
+  pdfPreview: string;
   cropApplied: boolean;
   status: 'pending' | 'processing' | 'completed' | 'error';
   pageNumbers: number[];
   confidence?: number;
-  retryCount?: number;
+  manualRequired?: boolean;
   error?: string;
 }
 

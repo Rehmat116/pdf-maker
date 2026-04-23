@@ -10,7 +10,7 @@ import { useBookCompiler } from "@/hooks/useBookCompiler";
 import { useKeyManager } from "@/hooks/useKeyManager";
 import { generatePDF, downloadBlob } from "@/lib/pdfGenerator";
 import { toast } from "@/hooks/use-toast";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, RefreshCw, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { BookImage } from "@/types/book";
 
@@ -23,6 +23,7 @@ interface ImageGridWithPaginationProps {
   onRemove: (id: string) => void;
   onRescan: (id: string) => void;
   onPreview: (id: string) => void;
+  onManualSave: (id: string, pageValue: string) => { ok: boolean; message: string };
 }
 
 const ImageGridWithPagination = ({
@@ -32,6 +33,7 @@ const ImageGridWithPagination = ({
   onRemove,
   onRescan,
   onPreview,
+  onManualSave,
 }: ImageGridWithPaginationProps) => {
   const totalPages = Math.ceil(images.length / IMAGES_PER_PAGE);
 
@@ -73,6 +75,7 @@ const ImageGridWithPagination = ({
               onRemove={onRemove}
               onRescan={onRescan}
               onPreview={onPreview}
+              onManualSave={onManualSave}
             />
           </div>
         ))}
@@ -154,6 +157,7 @@ const Index = () => {
 
   const {
     images,
+    failedImages,
     isProcessing,
     isPreparingImages,
     preparingState,
@@ -167,7 +171,9 @@ const Index = () => {
     getSortedImages,
     removeDuplicates,
     rescanImage,
+    retryAllImages,
     retryFailedImages,
+    setManualPageNumber,
   } = useBookCompiler();
 
   const handleFilesAdded = async (files: File[]) => {
@@ -329,6 +335,21 @@ const Index = () => {
 
           <ProgressBar state={processingState} isProcessing={isProcessing} />
 
+          {failedImages.length > 0 && (
+            <div className="sticky top-[60px] z-20 flex items-center justify-between gap-4 rounded-[20px] border border-amber-300 bg-amber-50 p-4 shadow-sm">
+              <div className="flex items-center gap-3">
+                <AlertTriangle className="h-5 w-5 text-amber-700" />
+                <p className="text-sm text-amber-900">
+                  {failedImages.length} images failed to scan.
+                </p>
+              </div>
+              <Button onClick={retryFailedImages} variant="outline" className="gap-2 rounded-full border-amber-300 text-amber-800 hover:bg-amber-100">
+                <RefreshCw className="h-4 w-4" />
+                Retry Failed
+              </Button>
+            </div>
+          )}
+
           <PageRangeBanner range={pageRange} onUploadMissing={handleUploadMissing} />
 
           {images.length > 0 && (
@@ -339,6 +360,7 @@ const Index = () => {
               onRemove={removeImage}
               onRescan={rescanImage}
               onPreview={setActivePreviewImageId}
+              onManualSave={setManualPageNumber}
             />
           )}
 
@@ -359,6 +381,7 @@ const Index = () => {
         isProcessing={isProcessing}
         onStartProcessing={startProcessing}
         onStopProcessing={stopProcessing}
+        onRetryAll={retryAllImages}
         onRetryFailed={retryFailedImages}
         onDownloadPDF={handleDownloadPDF}
         onClearAll={clearAll}

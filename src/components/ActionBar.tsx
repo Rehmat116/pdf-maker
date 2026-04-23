@@ -7,6 +7,7 @@ interface ActionBarProps {
   isProcessing: boolean;
   onStartProcessing: () => void;
   onStopProcessing: () => void;
+  onRetryAll: () => void;
   onRetryFailed: () => void;
   onDownloadPDF: () => void;
   onClearAll: () => void;
@@ -19,6 +20,7 @@ export function ActionBar({
   isProcessing,
   onStartProcessing,
   onStopProcessing,
+  onRetryAll,
   onRetryFailed,
   onDownloadPDF,
   onClearAll,
@@ -77,10 +79,17 @@ export function ActionBar({
           </Button>
         )}
 
+        {!isProcessing && (
+          <Button onClick={onRetryAll} variant="outline" size="sm" disabled={images.length === 0} className="gap-2 rounded-full">
+            <RefreshCw className="h-4 w-4" />
+            Retry All
+          </Button>
+        )}
+
         {!isProcessing && failedCount > 0 && (
           <Button onClick={onRetryFailed} variant="outline" size="sm" className="gap-2 rounded-full border-amber-300 text-amber-700 hover:bg-amber-50">
             <RefreshCw className="h-4 w-4" />
-            Retry All Failed ({failedCount})
+            Retry Failed ({failedCount})
           </Button>
         )}
 

@@ -38,7 +38,7 @@ export async function generatePDF(
 
     try {
       // Load and compress image with memory-safe pipeline
-      const compressedData = await compressForPDF(image.preview);
+      const compressedData = await compressForPDF(image.pdfPreview || image.preview);
       
       // Calculate dimensions to fit page
       const aspectRatio = compressedData.width / compressedData.height;
@@ -77,8 +77,8 @@ export async function generatePDF(
 
 // Memory-efficient image compression for PDF
 async function compressForPDF(src: string): Promise<{ dataUrl: string; width: number; height: number }> {
-  const MAX_DIMENSION = 1000;
-  const QUALITY = 0.5;
+  const MAX_DIMENSION = 1200;
+  const QUALITY = 0.85;
 
   return new Promise((resolve, reject) => {
     const img = new Image();
