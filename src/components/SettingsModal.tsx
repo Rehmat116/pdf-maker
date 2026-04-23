@@ -4,6 +4,8 @@ import { Button } from '@/components/ui/button';
 import { useKeyManager } from '@/hooks/useKeyManager';
 import { toast } from '@/hooks/use-toast';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { Switch } from '@/components/ui/switch';
+import { getAutoCropEnabled, setAutoCropEnabled } from '@/lib/settings';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -14,6 +16,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const { keys, addKey, removeKey, clearAllKeys } = useKeyManager();
   const [newKey, setNewKey] = useState('');
   const [newLabel, setNewLabel] = useState('');
+  const [autoCropEnabled, setAutoCropEnabledState] = useState(getAutoCropEnabled);
 
   const handleAddKey = () => {
     if (newKey.length < 10) {
@@ -50,6 +53,15 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     });
   };
 
+  const handleAutoCropToggle = (checked: boolean) => {
+    setAutoCropEnabledState(checked);
+    setAutoCropEnabled(checked);
+    toast({
+      title: checked ? 'Auto Crop Enabled' : 'Auto Crop Disabled',
+      description: checked ? 'New uploads will be cropped automatically.' : 'New uploads will keep their original edges.',
+    });
+  };
+
   return (
     <Sheet open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <SheetContent side="right" className="w-full border-l border-border bg-background px-4 py-6 sm:max-w-xl">
@@ -64,6 +76,18 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
         </SheetHeader>
 
         <div className="space-y-6 overflow-y-auto py-6">
+          <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-sm font-medium text-foreground">Auto Crop Background</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Trim outer background margins before Gemini scanning and PDF export.
+                </p>
+              </div>
+              <Switch checked={autoCropEnabled} onCheckedChange={handleAutoCropToggle} />
+            </div>
+          </div>
+
           <div className="space-y-3">
             {keys.map((key, index) => (
               <div

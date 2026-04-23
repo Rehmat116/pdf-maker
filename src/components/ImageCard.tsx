@@ -179,6 +179,11 @@ const ImageCardComponent = ({ image, index = 0, onRemove, onRescan, onPreview }:
         `}>
           {getStatusText()}
         </span>
+          {typeof image.retryCount === "number" && image.retryCount > 0 && (
+            <span className="font-mono text-[11px] text-amber-600">
+              retry {image.retryCount}/4
+            </span>
+          )}
           {typeof image.confidence === "number" && (
             <span className="font-mono text-[11px] text-muted-foreground">
               {image.confidence}%

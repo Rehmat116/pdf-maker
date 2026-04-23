@@ -1,6 +1,8 @@
 const PADDING = 8;
-const BRIGHTNESS_THRESHOLD = 30;
+const BRIGHTNESS_THRESHOLD = 16;
+const COLOR_DISTANCE_THRESHOLD = 42;
 const CONTENT_RATIO_THRESHOLD = 0.9;
+const MIN_EDGE_CONTENT_PIXELS = 3;
 
 export interface AutoCropResult {
   file: File;
@@ -10,6 +12,16 @@ export interface AutoCropResult {
 }
 
 const getBrightness = (r: number, g: number, b: number) => (r + g + b) / 3;
+
+const getPixel = (data: Uint8ClampedArray, width: number, x: number, y: number) => {
+  const index = (y * width + x) * 4;
+  return {
+    r: data[index],
+    g: data[index + 1],
+    b: data[index + 2],
+    a: data[index + 3],
+  };
+};
 
 const sampleBackground = (data: Uint8ClampedArray, width: number, height: number) => {
   const samplePoints = [
@@ -28,10 +40,10 @@ const sampleBackground = (data: Uint8ClampedArray, width: number, height: number
   let totalB = 0;
 
   samplePoints.forEach(([x, y]) => {
-    const index = (y * width + x) * 4;
-    totalR += data[index];
-    totalG += data[index + 1];
-    totalB += data[index + 2];
+    const pixel = getPixel(data, width, x, y);
+    totalR += pixel.r;
+    totalG += pixel.g;
+    totalB += pixel.b;
   });
 
   return {
@@ -41,48 +53,103 @@ const sampleBackground = (data: Uint8ClampedArray, width: number, height: number
   };
 };
 
-const findBoundingBox = (data: Uint8ClampedArray, width: number, height: number) => {
-  const bg = sampleBackground(data, width, height);
-  let minX = width;
-  let minY = height;
-  let maxX = -1;
-  let maxY = -1;
-  let contentPixels = 0;
+const isContentPixel = (
+  data: Uint8ClampedArray,
+  width: number,
+  x: number,
+  y: number,
+  background: { r: number; g: number; b: number },
+) => {
+  const pixel = getPixel(data, width, x, y);
+  if (pixel.a === 0) {
+    return false;
+  }
 
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const index = (y * width + x) * 4;
-      const r = data[index];
-      const g = data[index + 1];
-      const b = data[index + 2];
-      const alpha = data[index + 3];
-      const brightnessDelta = Math.abs(getBrightness(r, g, b) - getBrightness(bg.r, bg.g, bg.b));
-      const colorDelta = Math.abs(r - bg.r) + Math.abs(g - bg.g) + Math.abs(b - bg.b);
+  const brightnessDelta = Math.abs(getBrightness(pixel.r, pixel.g, pixel.b) - getBrightness(background.r, background.g, background.b));
+  const colorDelta = Math.abs(pixel.r - background.r) + Math.abs(pixel.g - background.g) + Math.abs(pixel.b - background.b);
 
-      if (alpha > 0 && (brightnessDelta > BRIGHTNESS_THRESHOLD || colorDelta > BRIGHTNESS_THRESHOLD * 3)) {
-        contentPixels += 1;
-        minX = Math.min(minX, x);
-        minY = Math.min(minY, y);
-        maxX = Math.max(maxX, x);
-        maxY = Math.max(maxY, y);
+  return brightnessDelta > BRIGHTNESS_THRESHOLD || colorDelta > COLOR_DISTANCE_THRESHOLD;
+};
+
+const hasContentOnRow = (
+  data: Uint8ClampedArray,
+  width: number,
+  y: number,
+  background: { r: number; g: number; b: number },
+) => {
+  let hits = 0;
+  for (let x = 0; x < width; x += 1) {
+    if (isContentPixel(data, width, x, y, background)) {
+      hits += 1;
+      if (hits >= MIN_EDGE_CONTENT_PIXELS) {
+        return true;
       }
     }
   }
 
-  if (maxX === -1 || maxY === -1) {
+  return false;
+};
+
+const hasContentOnColumn = (
+  data: Uint8ClampedArray,
+  width: number,
+  height: number,
+  x: number,
+  background: { r: number; g: number; b: number },
+) => {
+  let hits = 0;
+  for (let y = 0; y < height; y += 1) {
+    if (isContentPixel(data, width, x, y, background)) {
+      hits += 1;
+      if (hits >= MIN_EDGE_CONTENT_PIXELS) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+};
+
+const findBoundingBox = (data: Uint8ClampedArray, width: number, height: number) => {
+  const background = sampleBackground(data, width, height);
+
+  let top = 0;
+  while (top < height && !hasContentOnRow(data, width, top, background)) {
+    top += 1;
+  }
+
+  let bottom = height - 1;
+  while (bottom >= top && !hasContentOnRow(data, width, bottom, background)) {
+    bottom -= 1;
+  }
+
+  let left = 0;
+  while (left < width && !hasContentOnColumn(data, width, height, left, background)) {
+    left += 1;
+  }
+
+  let right = width - 1;
+  while (right >= left && !hasContentOnColumn(data, width, height, right, background)) {
+    right -= 1;
+  }
+
+  if (left >= right || top >= bottom) {
     return null;
   }
 
-  const contentRatio = contentPixels / (width * height);
-  if (contentRatio > CONTENT_RATIO_THRESHOLD) {
+  const croppedWidth = right - left + 1;
+  const croppedHeight = bottom - top + 1;
+  const croppedRatio = (croppedWidth * croppedHeight) / (width * height);
+
+  if (croppedRatio > CONTENT_RATIO_THRESHOLD) {
     return null;
   }
 
   return {
-    x: Math.max(0, minX - PADDING),
-    y: Math.max(0, minY - PADDING),
-    width: Math.min(width - Math.max(0, minX - PADDING), maxX - minX + 1 + PADDING * 2),
-    height: Math.min(height - Math.max(0, minY - PADDING), maxY - minY + 1 + PADDING * 2),
+    x: Math.max(0, left - PADDING),
+    y: Math.max(0, top - PADDING),
+    width: Math.min(width - Math.max(0, left - PADDING), croppedWidth + PADDING * 2),
+    height: Math.min(height - Math.max(0, top - PADDING), croppedHeight + PADDING * 2),
   };
 };
 

@@ -2,6 +2,7 @@ import { useState, useCallback, useRef } from "react";
 import { BookImage, ProcessingState, PageRange } from "@/types/book";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { autoCropImage } from "@/lib/imageCrop";
+import { getAutoCropEnabled } from "@/lib/settings";
 
 // --- OPTIMIZED SETTINGS ---
 const BATCH_SIZE = 25;
@@ -9,6 +10,7 @@ const DELAY_BETWEEN_BATCHES = 12000; // 12 seconds
 const MAX_RETRIES = 5;
 const INITIAL_RETRY_DELAY = 10000;
 const API_TIMEOUT = 45000; // 45 seconds timeout
+const AUTO_SCAN_RETRY_LIMIT = 4;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -269,17 +271,82 @@ RESPOND ONLY WITH THE JSON ARRAY.`,
       }));
     }
 
+    const finalizeImageResult = (img: BookImage, pageNumbers: number[], retryCount = 0): BookImage => {
+      if (pageNumbers.length > 0) {
+        const duplicatePage = hasAnyDuplicatePage(pageNumbers, existingPages);
+        if (duplicatePage !== null) {
+          return {
+            ...img,
+            status: "error" as const,
+            pageNumbers: [],
+            retryCount,
+            error: `Skipped: Page ${duplicatePage} already exists`,
+          };
+        }
+        pageNumbers.forEach((p) => existingPages.add(p));
+      }
+
+      return {
+        ...img,
+        status: "completed" as const,
+        pageNumbers,
+        retryCount,
+        confidence: pageNumbers.length > 1 ? 97 : pageNumbers.length === 1 ? 91 : 42,
+        error: undefined,
+      };
+    };
+
+    const retrySingleImageScan = async (img: BookImage): Promise<BookImage> => {
+      for (let attempt = 1; attempt <= AUTO_SCAN_RETRY_LIMIT; attempt += 1) {
+        try {
+          setImages((prev) =>
+            prev.map((item) =>
+              item.id === img.id
+                ? {
+                    ...item,
+                    status: "processing" as const,
+                    retryCount: attempt,
+                    error: `Auto retry ${attempt}/${AUTO_SCAN_RETRY_LIMIT}...`,
+                  }
+                : item,
+            ),
+          );
+
+          const base64 = await compressImageJIT(img.file);
+          const result = await detectPageNumbersBatch([base64], [img.id]);
+          return finalizeImageResult(img, result[0] || [], attempt);
+        } catch (retryError) {
+          if (attempt === AUTO_SCAN_RETRY_LIMIT) {
+            return {
+              ...img,
+              status: "error" as const,
+              retryCount: attempt,
+              error: `Scan failed after ${AUTO_SCAN_RETRY_LIMIT} retries. Use manual retry.`,
+            };
+          }
+        }
+      }
+
+      return {
+        ...img,
+        status: "error" as const,
+        retryCount: AUTO_SCAN_RETRY_LIMIT,
+        error: `Scan failed after ${AUTO_SCAN_RETRY_LIMIT} retries. Use manual retry.`,
+      };
+    };
+
     try {
       const batchResults = await detectPageNumbersBatch(base64Data, imageIds);
       
       // Immediately clear base64 data from memory
       base64Data.length = 0;
 
-      const processedImages: BookImage[] = batchImages.map((img, idx) => {
+      const processedImages: BookImage[] = batchImages.map((img) => {
         if (failedIds.includes(img.id)) {
           return {
             ...img,
             status: "error" as const,
+            retryCount: 0,
             error: "Failed to read image",
           };
         }
@@ -289,41 +356,35 @@ RESPOND ONLY WITH THE JSON ARRAY.`,
           return {
             ...img,
             status: "error" as const,
+            retryCount: 0,
             error: "Processing error",
           };
         }
 
         const pageNumbers = batchResults[resultIdx] || [];
-
-        if (pageNumbers.length > 0) {
-          const duplicatePage = hasAnyDuplicatePage(pageNumbers, existingPages);
-          if (duplicatePage !== null) {
-            return {
-              ...img,
-              status: "error" as const,
-              pageNumbers: [],
-              error: `Skipped: Page ${duplicatePage} already exists`,
-            };
-          }
-          pageNumbers.forEach((p) => existingPages.add(p));
-        }
-
-        return {
-          ...img,
-          status: "completed" as const,
-          pageNumbers,
-          confidence: pageNumbers.length > 1 ? 97 : pageNumbers.length === 1 ? 91 : 42,
-          error: undefined,
-        };
+        return finalizeImageResult(img, pageNumbers);
       });
 
       return processedImages;
     } catch (error) {
-      return batchImages.map((img) => ({
-        ...img,
-        status: "error" as const,
-        error: error instanceof Error ? error.message : "Unknown error",
-      }));
+      const retriedResults = await Promise.all(
+        batchImages.map((img) =>
+          failedIds.includes(img.id)
+            ? Promise.resolve({
+                ...img,
+                status: "error" as const,
+                retryCount: 0,
+                error: "Failed to read image",
+              } satisfies BookImage)
+            : retrySingleImageScan(img),
+        ),
+      );
+
+      return retriedResults.map((result) =>
+        result.status === "error" && !result.error
+          ? { ...result, error: error instanceof Error ? error.message : "Unknown error" }
+          : result,
+      );
     }
   };
 
@@ -378,6 +439,7 @@ RESPOND ONLY WITH THE JSON ARRAY.`,
   const addImages = useCallback(async (files: File[]) => {
     setIsPreparingImages(true);
     setPreparingState({ total: files.length, completed: 0 });
+    const autoCropEnabled = getAutoCropEnabled();
 
     const newImages: BookImage[] = [];
 
@@ -386,13 +448,14 @@ RESPOND ONLY WITH THE JSON ARRAY.`,
         const cropped = await autoCropImage(file);
         const newImage = {
           id: `${Date.now()}-${index}-${Math.random().toString(36).substr(2, 9)}`,
-          file: cropped.file,
-          preview: cropped.croppedPreview,
+          file: autoCropEnabled ? cropped.file : file,
+          preview: autoCropEnabled ? cropped.croppedPreview : cropped.originalPreview,
           originalPreview: cropped.originalPreview,
-          croppedPreview: cropped.croppedPreview,
-          cropApplied: cropped.cropApplied,
+          croppedPreview: autoCropEnabled ? cropped.croppedPreview : cropped.originalPreview,
+          cropApplied: autoCropEnabled ? cropped.cropApplied : false,
           status: "pending" as const,
           pageNumbers: [],
+          retryCount: 0,
         } satisfies BookImage;
 
         newImages.push(newImage);
@@ -498,51 +561,77 @@ RESPOND ONLY WITH THE JSON ARRAY.`,
       if (!targetImage || targetImage.status !== "error") return;
 
       setImages((prev) =>
-        prev.map((img) => (img.id === imageId ? { ...img, status: "processing" as const, error: undefined } : img)),
+        prev.map((img) => (img.id === imageId ? { ...img, status: "processing" as const, retryCount: 0, error: undefined } : img)),
       );
 
       try {
-        const base64 = await compressImageJIT(targetImage.file);
-        const results = await detectPageNumbersBatch([base64], [imageId]);
-        const pageNumbers = results[0] || [];
-
         const existingPages = getExistingPageNumbers(images, [imageId]);
-        if (pageNumbers.length > 0) {
-          const duplicatePage = hasAnyDuplicatePage(pageNumbers, existingPages);
-          if (duplicatePage !== null) {
+
+        for (let attempt = 1; attempt <= AUTO_SCAN_RETRY_LIMIT; attempt += 1) {
+          try {
+            setImages((prev) =>
+              prev.map((img) =>
+                img.id === imageId
+                  ? { ...img, status: "processing" as const, retryCount: attempt, error: `Manual retry ${attempt}/${AUTO_SCAN_RETRY_LIMIT}...` }
+                  : img,
+              ),
+            );
+
+            const base64 = await compressImageJIT(targetImage.file);
+            const results = await detectPageNumbersBatch([base64], [imageId]);
+            const pageNumbers = results[0] || [];
+
+            if (pageNumbers.length > 0) {
+              const duplicatePage = hasAnyDuplicatePage(pageNumbers, existingPages);
+              if (duplicatePage !== null) {
+                setImages((prev) =>
+                  prev.map((img) =>
+                    img.id === imageId
+                      ? {
+                          ...img,
+                          status: "error" as const,
+                          pageNumbers: [],
+                          retryCount: attempt,
+                          error: `Skipped: Page ${duplicatePage} already exists`,
+                        }
+                      : img,
+                  ),
+                );
+                return;
+              }
+            }
+
             setImages((prev) =>
               prev.map((img) =>
                 img.id === imageId
                   ? {
                       ...img,
-                      status: "error" as const,
-                      pageNumbers: [],
-                      error: `Skipped: Page ${duplicatePage} already exists`,
+                      status: "completed" as const,
+                      pageNumbers,
+                      retryCount: attempt,
+                      confidence: pageNumbers.length > 1 ? 97 : pageNumbers.length === 1 ? 91 : 42,
+                      error: undefined,
                     }
                   : img,
               ),
             );
             return;
+          } catch (retryErr) {
+            if (attempt === AUTO_SCAN_RETRY_LIMIT) {
+              throw retryErr;
+            }
           }
         }
+      } catch (err) {
         setImages((prev) =>
           prev.map((img) =>
             img.id === imageId
               ? {
                   ...img,
-                  status: "completed" as const,
-                  pageNumbers,
-                  confidence: pageNumbers.length > 1 ? 97 : pageNumbers.length === 1 ? 91 : 42,
-                  error: undefined,
+                  status: "error" as const,
+                  retryCount: AUTO_SCAN_RETRY_LIMIT,
+                  error: `Manual retry failed after ${AUTO_SCAN_RETRY_LIMIT} attempts.`,
                 }
-              : img,
-          ),
-        );
-      } catch (err) {
-        setImages((prev) =>
-          prev.map((img) =>
-            img.id === imageId
-              ? { ...img, status: "error" as const, error: err instanceof Error ? err.message : "Rescan failed" }
               : img,
           ),
         );

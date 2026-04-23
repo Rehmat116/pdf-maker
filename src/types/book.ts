@@ -8,6 +8,7 @@ export interface BookImage {
   status: 'pending' | 'processing' | 'completed' | 'error';
   pageNumbers: number[];
   confidence?: number;
+  retryCount?: number;
   error?: string;
 }
 
