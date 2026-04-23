@@ -1,0 +1,4 @@
+project_id = "trlrwcrbekeuxuigbpfb"
+
+[functions.detect-page]
+verify_jwt = false
